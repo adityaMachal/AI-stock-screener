@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from database import engine, Base
+from database import engine, Base, check_and_migrate_db
 from backend.routes import auth, query, portfolio, alerts, companies
 from prometheus_fastapi_instrumentator import Instrumentator
 
-# Create database tables
+# Create database tables and apply column migrations
 Base.metadata.create_all(bind=engine)
+check_and_migrate_db()
 
 app = FastAPI(title="AI-Powered Stock Screener API")
 

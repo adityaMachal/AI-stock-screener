@@ -9,7 +9,12 @@ def seed_db():
     db = SessionLocal()
     
     print("Seeding users...")
-    user1 = User(username="testuser", hashed_password=get_password_hash("password123"))
+    user1 = User(
+        username="testuser",
+        email="testuser@example.com",
+        full_name="Test Investor",
+        hashed_password=get_password_hash("password123")
+    )
     db.add(user1)
     
     print("Seeding symbols...")
