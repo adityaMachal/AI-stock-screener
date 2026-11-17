@@ -1,6 +1,6 @@
 import os
 import requests
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import hashlib
@@ -22,29 +22,60 @@ class QueryRequest(BaseModel):
 
 @router.post("/")
 def run_query(request: QueryRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    clean_query = request.query.strip()
+    if not clean_query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
     # Simple cache key generation
-    query_hash = hashlib.md5(request.query.encode()).hexdigest()
+    query_hash = hashlib.md5(clean_query.lower().encode()).hexdigest()
     cache_key = f"query_{query_hash}"
     
     cached_result = get_cache(cache_key)
     if cached_result:
         return cached_result
         
+    dsl_dict = None
     try:
-        # 1. Call LLM Microservice to parse natural language to DSL
-        response = requests.post(f"{LLM_SERVICE_URL}/parse", json={"query": request.query})
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=f"LLM Service Error: {response.text}")
+        # 1. Call LLM Microservice with 15-second socket timeout
+        try:
+            response = requests.post(
+                f"{LLM_SERVICE_URL}/parse",
+                json={"query": clean_query},
+                timeout=15.0
+            )
+            if response.status_code == 200:
+                dsl_dict = response.json()
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"LLM Service Error: {response.text}"
+                )
+        except requests.exceptions.Timeout:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="LLM service timed out after 15 seconds. Please try a simpler query."
+            )
+        except requests.exceptions.ConnectionError:
+            # In-process fallback if standalone LLM microservice is unreachable
+            try:
+                from llm.parser import parse_query_to_dsl
+                dsl_dict = parse_query_to_dsl(clean_query)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"LLM Microservice unreachable and in-process fallback failed: {e}"
+                )
         
-        dsl_dict = response.json()
-        
+        if not dsl_dict:
+            raise HTTPException(status_code=400, detail="Failed to parse query to DSL.")
+
         # 2. Validate DSL (Local validation for extra safety)
         dsl = validate_dsl(dsl_dict)
         
-        # 3. Compile and Execute
+        # 3. Compile and Execute against database
         result = execute_query(db, dsl)
         
-        # Cache the result
+        # 4. Cache the result for 5 minutes
         set_cache(cache_key, result, ttl=300)
         
         return result
