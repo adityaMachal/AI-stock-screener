@@ -142,3 +142,4 @@ config.yaml
 *.key
 .env*
 ! .env.example
+.antigravitycli/

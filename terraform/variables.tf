@@ -3,7 +3,7 @@ variable "aws_region" {
 }
 
 variable "instance_type" {
-  default = "m7i-flex.large" # 8GB RAM - high performance for K8s and CI/CD
+  default = "m7i-flex.large" # Eligible for Free Tier in this account (2 vCPUs, 8GB RAM)
 }
 
 variable "key_name" {

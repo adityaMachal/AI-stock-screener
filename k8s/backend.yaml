@@ -20,6 +20,8 @@ spec:
         env:
         - name: DATABASE_URL
           value: "postgresql://myuser:mypassword@db:5432/stock_screener"
+        - name: REDIS_URL
+          value: "redis://redis:6379/0"
         - name: LLM_SERVICE_URL
           value: "http://llm-service:8001"
 ---
@@ -30,9 +32,11 @@ metadata:
   labels:
     app: stock-backend
 spec:
+  type: NodePort
   selector:
     app: stock-backend
   ports:
   - name: http
     port: 8000
     targetPort: 8000
+    nodePort: 30800
