@@ -94,9 +94,13 @@ async def login(request: Request, db: Session = Depends(get_db)):
     if not identifier or not password:
         raise HTTPException(status_code=400, detail="Username/email and password are required")
         
+    from sqlalchemy import or_, func
     clean_identifier = str(identifier).strip()
     user = db.query(User).filter(
-        (User.username == clean_identifier) | (User.email == clean_identifier.lower())
+        or_(
+            func.lower(User.username) == clean_identifier.lower(),
+            func.lower(User.email) == clean_identifier.lower()
+        )
     ).first()
     
     if not user or not verify_password(password, user.hashed_password):

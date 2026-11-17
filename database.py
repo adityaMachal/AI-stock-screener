@@ -8,14 +8,23 @@ load_dotenv()
 # Example PostgreSQL URL: postgresql://user:password@postgresserver/db
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./stock_screener.db")
 
-try:
-    engine = create_engine(SQLALCHEMY_DATABASE_URL)
-    # If a remote/postgres database is configured, test connection
+engine = None
+if "postgresql" in SQLALCHEMY_DATABASE_URL:
+    import time
+    for attempt in range(1, 6):
+        try:
+            temp_engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+            with temp_engine.connect() as conn:
+                engine = temp_engine
+                print(f"Connected to PostgreSQL database successfully on attempt {attempt}.")
+                break
+        except Exception as e:
+            print(f"Waiting for PostgreSQL to be ready (attempt {attempt}/5): {e}")
+            time.sleep(2)
+
+if engine is None:
     if "postgresql" in SQLALCHEMY_DATABASE_URL:
-        with engine.connect() as conn:
-            pass
-except Exception as e:
-    print(f"Notice: Configured DATABASE_URL unavailable ({e}). Falling back to local SQLite.")
+        print("Notice: PostgreSQL unavailable after retries. Falling back to local SQLite.")
     SQLALCHEMY_DATABASE_URL = "sqlite:///./stock_screener.db"
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
 

@@ -26,7 +26,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise credentials_exception
     
-    user = db.query(User).filter((User.username == username) | (User.email == username)).first()
+    from sqlalchemy import or_, func
+    user = db.query(User).filter(
+        or_(
+            func.lower(User.username) == username.lower(),
+            func.lower(User.email) == username.lower()
+        )
+    ).first()
     if user is None:
         raise credentials_exception
     if not user.is_active:
