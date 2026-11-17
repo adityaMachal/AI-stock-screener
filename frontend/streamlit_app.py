@@ -105,6 +105,16 @@ def logout():
     st.session_state["search_query"] = ""
     st.rerun()
 
+def check_auth_response(res):
+    """Detects 401 Unauthorized / expired JWT and resets session state gracefully."""
+    if res.status_code == 401:
+        st.session_state["token"] = None
+        st.session_state["user"] = None
+        st.session_state["query_history"] = []
+        st.session_state["search_query"] = ""
+        st.error("⚠️ Your session has expired or is invalid. Please sign in again.")
+        st.rerun()
+
 # ---------------------------------------------------------
 # VIEW 1: UNAUTHENTICATED GATEWAY (Sign In / Create Account)
 # ---------------------------------------------------------
@@ -221,6 +231,22 @@ if not st.session_state["token"]:
 # ---------------------------------------------------------
 else:
     headers = {"Authorization": f"Bearer {st.session_state['token']}"}
+    
+    # Auto-validate active session token; reset session gracefully if expired or invalid
+    try:
+        verify_res = requests.get(f"{API_URL}/auth/me", headers=headers, timeout=5.0)
+        if verify_res.status_code == 401:
+            st.session_state["token"] = None
+            st.session_state["user"] = None
+            st.session_state["query_history"] = []
+            st.session_state["search_query"] = ""
+            st.warning("⚠️ Your session has expired. Please sign in again.")
+            st.rerun()
+        elif verify_res.status_code == 200:
+            st.session_state["user"] = verify_res.json()
+    except Exception:
+        pass
+
     user_info = st.session_state.get("user") or {}
     display_name = user_info.get("full_name") or user_info.get("username") or "Investor"
     user_email = user_info.get("email") or "Active Session"
@@ -344,6 +370,8 @@ else:
                                     st.plotly_chart(fig_sec, use_container_width=True)
                         else:
                             st.warning("No companies matched your specified criteria. Try widening your thresholds.")
+                    elif res.status_code == 401:
+                        check_auth_response(res)
                     elif res.status_code == 504:
                         st.error("⏱️ Query timed out after 20 seconds. Please try a more specific search.")
                     else:
@@ -362,7 +390,9 @@ else:
         
         try:
             res = requests.get(f"{API_URL}/portfolio/", headers=headers, timeout=20.0)
-            if res.status_code == 200:
+            if res.status_code == 401:
+                check_auth_response(res)
+            elif res.status_code == 200:
                 p_data = res.json()
                 if p_data:
                     df_p = pd.DataFrame(p_data)
@@ -560,7 +590,9 @@ else:
             st.markdown("#### Live Monitoring & Triggered Alerts")
             try:
                 eval_res = requests.get(f"{API_URL}/alerts/evaluated", headers=headers, timeout=15.0)
-                if eval_res.status_code == 200:
+                if eval_res.status_code == 401:
+                    check_auth_response(eval_res)
+                elif eval_res.status_code == 200:
                     alerts = eval_res.json()
                     if alerts:
                         for al in alerts:
@@ -594,7 +626,9 @@ else:
         
         try:
             p_res = requests.get(f"{API_URL}/auth/me", headers=headers, timeout=10.0)
-            if p_res.status_code == 200:
+            if p_res.status_code == 401:
+                check_auth_response(p_res)
+            elif p_res.status_code == 200:
                 p_info = p_res.json()
                 
                 col_p_info, col_p_edit = st.columns([1, 1])

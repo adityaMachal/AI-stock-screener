@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from database import engine, Base, check_and_migrate_db
+from database import engine, Base, check_and_migrate_db, auto_seed_db
 from backend.routes import auth, query, portfolio, alerts, companies
 from prometheus_fastapi_instrumentator import Instrumentator
 
-# Create database tables and apply column migrations
+# Create database tables, apply column migrations, and seed initial dataset if empty
 Base.metadata.create_all(bind=engine)
 check_and_migrate_db()
+auto_seed_db()
 
 app = FastAPI(title="AI-Powered Stock Screener API")
 
@@ -30,4 +31,9 @@ Instrumentator().instrument(app).expose(app)
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the AI-Powered Stock Screener API"}
+
+@app.post("/seed")
+def trigger_seed():
+    auto_seed_db()
+    return {"message": "Database auto-seeded successfully"}
 
