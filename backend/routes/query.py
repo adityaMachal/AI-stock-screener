@@ -46,24 +46,18 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db), current_user
             if response.status_code == 200:
                 dsl_dict = response.json()
             else:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"LLM Service Error: {response.text}"
-                )
-        except requests.exceptions.Timeout:
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="LLM service timed out after 15 seconds. Please try a simpler query."
-            )
-        except requests.exceptions.ConnectionError:
-            # In-process fallback if standalone LLM microservice is unreachable
+                # If LLM microservice errors, fall back to in-process parser
+                from llm.parser import parse_query_to_dsl
+                dsl_dict = parse_query_to_dsl(clean_query)
+        except Exception:
+            # If LLM microservice times out or is unreachable, fall back to in-process parser
             try:
                 from llm.parser import parse_query_to_dsl
                 dsl_dict = parse_query_to_dsl(clean_query)
             except Exception as e:
                 raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=f"LLM Microservice unreachable and in-process fallback failed: {e}"
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Query parsing failed: {e}"
                 )
         
         if not dsl_dict:

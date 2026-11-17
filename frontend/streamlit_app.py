@@ -103,17 +103,27 @@ def logout():
     st.session_state["user"] = None
     st.session_state["query_history"] = []
     st.session_state["search_query"] = ""
+    st.session_state["session_verified"] = False
     st.rerun()
 
 def check_auth_response(res):
-    """Detects 401 Unauthorized / expired JWT and resets session state gracefully."""
+    """Detects 401 Unauthorized / expired JWT and resets session state gracefully only if genuinely a user auth error."""
     if res.status_code == 401:
-        st.session_state["token"] = None
-        st.session_state["user"] = None
-        st.session_state["query_history"] = []
-        st.session_state["search_query"] = ""
-        st.error("⚠️ Your session has expired or is invalid. Please sign in again.")
-        st.rerun()
+        try:
+            detail = str(res.json().get("detail", ""))
+        except Exception:
+            detail = ""
+        # Only log out if it's genuinely a user token/credentials error, not an upstream service error
+        if "credentials" in detail.lower() or "token" in detail.lower() or "not authenticated" in detail.lower():
+            st.session_state["token"] = None
+            st.session_state["user"] = None
+            st.session_state["query_history"] = []
+            st.session_state["search_query"] = ""
+            st.session_state["session_verified"] = False
+            st.error("⚠️ Your session has expired or is invalid. Please sign in again.")
+            st.rerun()
+        else:
+            st.error(f"❌ Service Error (401): {detail}")
 
 # ---------------------------------------------------------
 # VIEW 1: UNAUTHENTICATED GATEWAY (Sign In / Create Account)
@@ -232,20 +242,23 @@ if not st.session_state["token"]:
 else:
     headers = {"Authorization": f"Bearer {st.session_state['token']}"}
     
-    # Auto-validate active session token; reset session gracefully if expired or invalid
-    try:
-        verify_res = requests.get(f"{API_URL}/auth/me", headers=headers, timeout=5.0)
-        if verify_res.status_code == 401:
-            st.session_state["token"] = None
-            st.session_state["user"] = None
-            st.session_state["query_history"] = []
-            st.session_state["search_query"] = ""
-            st.warning("⚠️ Your session has expired. Please sign in again.")
-            st.rerun()
-        elif verify_res.status_code == 200:
-            st.session_state["user"] = verify_res.json()
-    except Exception:
-        pass
+    # Validate active session token once per session on initial load
+    if not st.session_state.get("session_verified"):
+        try:
+            verify_res = requests.get(f"{API_URL}/auth/me", headers=headers, timeout=5.0)
+            if verify_res.status_code == 401:
+                st.session_state["token"] = None
+                st.session_state["user"] = None
+                st.session_state["query_history"] = []
+                st.session_state["search_query"] = ""
+                st.session_state["session_verified"] = False
+                st.warning("⚠️ Your session has expired. Please sign in again.")
+                st.rerun()
+            elif verify_res.status_code == 200:
+                st.session_state["user"] = verify_res.json()
+                st.session_state["session_verified"] = True
+        except Exception:
+            pass
 
     user_info = st.session_state.get("user") or {}
     display_name = user_info.get("full_name") or user_info.get("username") or "Investor"

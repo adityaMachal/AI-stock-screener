@@ -16,15 +16,31 @@ if api_key and api_key != "your_gemini_api_key_here":
 SECTOR_MAP = {
     "tech": "Technology",
     "technology": "Technology",
+    "software": "Technology",
+    "semiconductor": "Technology",
+    "semis": "Technology",
+    "chips": "Technology",
+    "ai": "Technology",
     "healthcare": "Healthcare",
     "health": "Healthcare",
+    "pharma": "Healthcare",
+    "pharmaceutical": "Healthcare",
+    "biotech": "Healthcare",
     "finance": "Financial Services",
     "financials": "Financial Services",
     "financial services": "Financial Services",
+    "bank": "Financial Services",
+    "banking": "Financial Services",
+    "insurance": "Financial Services",
     "consumer": "Consumer Cyclical",
     "consumer cyclical": "Consumer Cyclical",
+    "retail": "Consumer Cyclical",
+    "auto": "Consumer Cyclical",
+    "ev": "Consumer Cyclical",
     "industrials": "Industrials",
     "energy": "Energy",
+    "oil": "Energy",
+    "gas": "Energy",
     "utilities": "Utilities",
     "real estate": "Real Estate",
     "communication": "Communication Services",
@@ -49,15 +65,19 @@ def rule_based_fallback_parser(query: str) -> dict:
         op = pe_match.group(1)
         val = float(pe_match.group(2))
         filters.append({"field": "pe_ratio", "operator": op, "value": val})
+    elif "undervalued" in q_lower or "low pe" in q_lower:
+        filters.append({"field": "pe_ratio", "operator": "<", "value": 25.0})
         
-    # 3. EPS matching: e.g. "eps > 5"
+    # 3. EPS matching: e.g. "eps > 5", "profitable"
     eps_match = re.search(r"\beps\s*(=|<=|>=|<|>)\s*(\d+(?:\.\d+)?)", q_lower)
     if eps_match:
         op = eps_match.group(1)
         val = float(eps_match.group(2))
         filters.append({"field": "eps", "operator": op, "value": val})
+    elif "profitable" in q_lower or "positive earnings" in q_lower:
+        filters.append({"field": "eps", "operator": ">", "value": 0.0})
         
-    # 4. Market Cap matching: e.g. "market cap > 50B", "market_cap < 100B"
+    # 4. Market Cap matching: e.g. "market cap > 50B", "market_cap < 100B", "mega cap", "large cap"
     cap_match = re.search(r"(?:market\s*cap|market_cap)\s*(=|<=|>=|<|>)\s*(\d+(?:\.\d+)?)\s*([tbmk])?", q_lower)
     if cap_match:
         op = cap_match.group(1)
@@ -72,13 +92,21 @@ def rule_based_fallback_parser(query: str) -> dict:
         elif unit == "k":
             val *= 1e3
         filters.append({"field": "market_cap", "operator": op, "value": val})
+    elif "mega cap" in q_lower or "mega-cap" in q_lower:
+        filters.append({"field": "market_cap", "operator": ">", "value": 200e9})
+    elif "large cap" in q_lower or "large-cap" in q_lower:
+        filters.append({"field": "market_cap", "operator": ">", "value": 10e9})
+    elif "small cap" in q_lower or "small-cap" in q_lower:
+        filters.append({"field": "market_cap", "operator": "<", "value": 2e9})
 
-    # 5. Revenue growth matching: e.g. "growth > 10", "revenue growth > 15"
+    # 5. Revenue growth matching: e.g. "growth > 10", "revenue growth > 15", "high growth"
     growth_match = re.search(r"(?:revenue\s*growth|growth)\s*(=|<=|>=|<|>)\s*(\d+(?:\.\d+)?)", q_lower)
     if growth_match:
         op = growth_match.group(1)
         val = float(growth_match.group(2))
         filters.append({"field": "revenue_growth", "operator": op, "value": val})
+    elif "high growth" in q_lower:
+        filters.append({"field": "revenue_growth", "operator": ">", "value": 15.0})
 
     if filters:
         return {"filters": filters, "logic": "AND"}
