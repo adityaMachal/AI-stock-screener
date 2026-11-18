@@ -7,7 +7,14 @@ from dsl.validator import ALLOWED_FIELDS
 
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
-if api_key and api_key != "your_gemini_api_key_here":
+
+def is_valid_gemini_key(key: str | None) -> bool:
+    if not key:
+        return False
+    clean = key.strip().lower()
+    return clean not in ("", "your_gemini_api_key_here", "none", "null")
+
+if is_valid_gemini_key(api_key):
     try:
         genai.configure(api_key=api_key)
     except Exception as e:
@@ -47,12 +54,56 @@ SECTOR_MAP = {
     "basic materials": "Basic Materials",
 }
 
+COMPANY_TICKERS = {
+    "apple": "AAPL", "aapl": "AAPL",
+    "microsoft": "MSFT", "msft": "MSFT",
+    "google": "GOOGL", "alphabet": "GOOGL", "googl": "GOOGL", "goog": "GOOGL",
+    "nvidia": "NVDA", "nvda": "NVDA",
+    "amazon": "AMZN", "amzn": "AMZN",
+    "tesla": "TSLA", "tsla": "TSLA",
+    "meta": "META", "facebook": "META",
+    "netflix": "NFLX", "nflx": "NFLX",
+    "disney": "DIS", "dis": "DIS",
+    "walmart": "WMT", "wmt": "WMT",
+    "costco": "COST", "cost": "COST",
+    "coca cola": "KO", "coke": "KO", "ko": "KO",
+    "pepsi": "PEP", "pepsico": "PEP", "pep": "PEP",
+    "jpmorgan": "JPM", "chase": "JPM", "jpm": "JPM",
+    "visa": "V",
+    "mastercard": "MA",
+    "johnson & johnson": "JNJ", "johnson and johnson": "JNJ", "jnj": "JNJ",
+    "pfizer": "PFE", "pfe": "PFE",
+    "exxon": "XOM", "exxonmobil": "XOM", "xom": "XOM",
+    "chevron": "CVX", "cvx": "CVX",
+    "boeing": "BA", "ba": "BA",
+    "caterpillar": "CAT", "cat": "CAT",
+    "broadcom": "AVGO", "avgo": "AVGO",
+    "oracle": "ORCL", "orcl": "ORCL",
+    "salesforce": "CRM", "crm": "CRM",
+    "amd": "AMD",
+    "intel": "INTC", "intc": "INTC",
+    "cisco": "CSCO", "csco": "CSCO",
+    "eli lilly": "LLY", "lly": "LLY",
+    "unitedhealth": "UNH", "unh": "UNH",
+    "abbvie": "ABBV", "abbv": "ABBV",
+    "merck": "MRK", "mrk": "MRK",
+    "honeywell": "HON", "hon": "HON",
+    "prologis": "PLD", "pld": "PLD",
+}
+
 def rule_based_fallback_parser(query: str) -> dict:
     """Deterministic fallback parser for common financial queries when LLM is unavailable or rate-limited."""
     q_lower = query.strip().lower()
     filters = []
     
-    # 1. Sector matching
+    # 1. Company name / ticker matching
+    for name, ticker in COMPANY_TICKERS.items():
+        pattern = r"\b" + re.escape(name) + r"\b"
+        if re.search(pattern, q_lower):
+            filters.append({"field": "symbol", "operator": "=", "value": ticker})
+            break
+
+    # 2. Sector matching
     for key, sector_name in SECTOR_MAP.items():
         pattern = r"\b" + re.escape(key) + r"\b"
         if re.search(pattern, q_lower):
@@ -110,7 +161,21 @@ def rule_based_fallback_parser(query: str) -> dict:
 
     if filters:
         return {"filters": filters, "logic": "AND"}
-    return None
+    # Safe universal fallback: returns empty filter to display all market stocks
+    return {"filters": [], "logic": "AND"}
+
+def normalize_dsl_dict(d: dict) -> dict:
+    """Normalize common variations in LLM JSON output to standard DSL schema."""
+    if not isinstance(d, dict):
+        return d
+    if "conditions" in d and "filters" not in d:
+        d["filters"] = d.pop("conditions")
+    if "filter" in d and "filters" not in d:
+        val = d.pop("filter")
+        d["filters"] = [val] if isinstance(val, dict) else val
+    if "logic" not in d:
+        d["logic"] = "AND"
+    return d
 
 def parse_query_to_dsl(query: str) -> dict:
     prompt = f"""
@@ -152,20 +217,30 @@ def parse_query_to_dsl(query: str) -> dict:
     """
     
     llm_error = None
-    if api_key and api_key != "your_gemini_api_key_here":
+    current_key = os.getenv("GEMINI_API_KEY") or api_key
+    if is_valid_gemini_key(current_key):
         try:
-            model = genai.GenerativeModel("gemini-flash-latest")
-            # 12-second explicit timeout prevents socket hang on 429 quota backoff
-            response = model.generate_content(prompt, request_options={"timeout": 12.0})
-            text = response.text.strip()
-            if text.startswith("```json"):
-                text = text[7:-3].strip()
-            elif text.startswith("```"):
-                text = text[3:-3].strip()
-            return json.loads(text)
+            genai.configure(api_key=current_key)
         except Exception as e:
-            llm_error = e
-            print(f"Gemini API generation failed/rate-limited: {e}. Trying fallback parser...")
+            print(f"Error configuring Gemini with current key: {e}")
+
+        # Primary model: gemini-3.8-flash; Fallback: gemini-latest (gemini-flash-latest)
+        models_to_try = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-flash-lite-latest"]
+        for model_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(model_name)
+                # 12-second explicit timeout prevents socket hang on 429 quota backoff
+                response = model.generate_content(prompt, request_options={"timeout": 12.0})
+                text = response.text.strip()
+                if text.startswith("```json"):
+                    text = text[7:-3].strip()
+                elif text.startswith("```"):
+                    text = text[3:-3].strip()
+                parsed = json.loads(text)
+                return normalize_dsl_dict(parsed)
+            except Exception as e:
+                llm_error = e
+                print(f"Gemini model '{model_name}' failed/rate-limited: {e}. Trying fallback...")
     else:
         llm_error = RuntimeError("GEMINI_API_KEY is not configured.")
 
